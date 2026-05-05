@@ -3,7 +3,8 @@
   "displayName": "LM Studio translator",
   "main": "./lib/main",
   "version": "1.0.0",
-  "description": "Translates non–English/Dutch mail to English using LM Studio (local LLM).",
+  "description": "Translates Chinese and Japanese mail to English (LM Studio). Script detection, HTML layout, prefetch.",
+  "syncInit": true,
   "scripts": {
     "build": "tsc",
     "test": "npm run build"

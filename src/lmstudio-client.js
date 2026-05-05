@@ -57,13 +57,36 @@ export async function chat(baseUrl, modelId, messages, maxTokens, signal) {
 }
 
 /**
- * @param {string} answer
- * @returns {'EN' | 'NL' | 'OTHER' | null}
+ * @param {'zh' | 'ja'} targetLang
+ * @param {string} htmlEmail
+ * @returns {Array<{ role: string, content: string }>}
  */
-export function parseLanguageTag(answer) {
-  const m = (answer || '').toUpperCase().match(/\b(EN|NL|OTHER)\b/);
-  if (m) {
-    return /** @type {'EN' | 'NL' | 'OTHER'} */ (m[1]);
+export function buildTranslateHtmlMessages(targetLang, htmlEmail) {
+  const source =
+    targetLang === 'ja'
+      ? 'Japanese'
+      : 'Chinese (Simplified, Traditional, or mixed)';
+  return [
+    {
+      role: 'system',
+      content: `You translate email HTML from ${source} to English. Preserve the HTML structure: keep all tags and attributes; translate only human-readable text in the body. Do not add html/code markdown fences. Output a single HTML fragment only, with no preamble or explanation.`,
+    },
+    {
+      role: 'user',
+      content: htmlEmail,
+    },
+  ];
+}
+
+/**
+ * Strip markdown code fences if the model adds them.
+ * @param {string} raw
+ */
+export function stripHtmlFences(raw) {
+  let s = (raw || '').trim();
+  if (s.startsWith('```')) {
+    s = s.replace(/^```[a-zA-Z]*\n?/, '');
+    s = s.replace(/```\s*$/, '');
   }
-  return null;
+  return s.trim();
 }

@@ -43,17 +43,62 @@
     word-break: break-word;
   }
 
-  &__note {
-    font-weight: normal;
-    color: @text-color-subtle;
+  &__trunc-note {
     font-size: 0.9em;
+    color: @text-color-subtle;
+    margin-bottom: 6px;
   }
 
-  &__text {
-    white-space: pre-wrap;
+  &__tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+
+  &__tab {
+    appearance: none;
+    border: 1px solid @border-color-divider;
+    background: @background-secondary;
+    color: @text-color;
+    border-radius: 3px;
+    padding: 4px 10px;
+    font-size: @font-size-small;
+    cursor: pointer;
+
+    &:hover {
+      background: fade(@accent-primary, 12%);
+    }
+
+    &--active {
+      border-color: @accent-primary;
+      font-weight: 600;
+      background: fade(@accent-primary, 15%);
+    }
+  }
+
+  &__scroll {
+    max-height: 360px;
+    overflow-y: auto;
+    overflow-x: auto;
+  }
+
+  &__html {
     word-break: break-word;
     color: @text-color;
-    max-height: 320px;
-    overflow-y: auto;
+
+    img {
+      max-width: 100%;
+      height: auto;
+    }
+
+    table {
+      max-width: 100%;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
   }
 }

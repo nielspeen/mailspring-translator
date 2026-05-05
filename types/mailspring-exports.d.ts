@@ -12,4 +12,11 @@ declare module 'mailspring-exports' {
   };
   export const PropTypes: any;
   export const localized: (s: string) => string;
+  export const SanitizeTransformer: {
+    run: (html: string) => Promise<string>;
+  };
+  export const MessageStore: {
+    listen: (cb: () => void) => () => void;
+    items: () => any[];
+  };
 }
