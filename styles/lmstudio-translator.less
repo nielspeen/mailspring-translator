@@ -19,20 +19,19 @@
     color: @text-color;
   }
 
-  &--result {
+  &--done {
     background: fade(@background-secondary, 95%);
     border-color: @border-color-divider;
+    color: @text-color;
   }
 
-  &__label,
-  &__title {
+  &__label {
     font-weight: 600;
-    margin-bottom: 4px;
+    margin-right: 8px;
     color: @text-color;
   }
 
   &__status {
-    margin-left: 6px;
     color: @text-color-subtle;
   }
 
@@ -41,65 +40,5 @@
     margin-top: 4px;
     white-space: pre-wrap;
     word-break: break-word;
-  }
-
-  &__trunc-note {
-    font-size: 0.9em;
-    color: @text-color-subtle;
-    margin-bottom: 6px;
-  }
-
-  &__tabs {
-    display: flex;
-    gap: 4px;
-    margin-bottom: 8px;
-    flex-wrap: wrap;
-  }
-
-  &__tab {
-    appearance: none;
-    border: 1px solid @border-color-divider;
-    background: @background-secondary;
-    color: @text-color;
-    border-radius: 3px;
-    padding: 4px 10px;
-    font-size: @font-size-small;
-    cursor: pointer;
-
-    &:hover {
-      /* Avoid fade(@accent-primary): not defined in every theme’s ui-variables */
-      background: fade(@text-color, 8%);
-    }
-
-    &--active {
-      border-color: fade(@text-color, 35%);
-      font-weight: 600;
-      background: fade(@text-color, 10%);
-    }
-  }
-
-  &__scroll {
-    max-height: 360px;
-    overflow-y: auto;
-    overflow-x: auto;
-  }
-
-  &__html {
-    word-break: break-word;
-    color: @text-color;
-
-    img {
-      max-width: 100%;
-      height: auto;
-    }
-
-    table {
-      max-width: 100%;
-    }
-
-    pre {
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
   }
 }

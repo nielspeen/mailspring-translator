@@ -1,26 +1,20 @@
 import {
   React,
   PropTypes,
+  MessageBodyProcessor,
   localized,
-  SanitizeTransformer,
 } from 'mailspring-exports';
 import { detectCjkTarget } from './cjk-detect';
-import { makeCacheKey, getCachedTranslation, setCachedTranslation } from './translation-cache';
-import {
-  getDefaultModelId,
-  chat,
-  buildTranslateHtmlMessages,
-  stripHtmlFences,
-} from './lmstudio-client';
-import { stripHtmlToText, truncateHtml } from './html-utils';
-import {
-  getLmstudioBaseUrl,
-  getHideOriginalIframe,
-} from './plugin-config';
+import { hasCurrentTranslation, persistTranslatedBody } from './mailspring-translation-storage';
+import { translateBodyHtmlWithLmStudio } from './translate-pipeline';
+import { stripHtmlToText } from './html-utils';
 
-const MAX_HTML = 120000;
-const CHAT_TOKENS = 8192;
+const DONE_AUTO_HIDE_MS = 5000;
 
+/**
+ * `message:BodyHeader` — LM translation + minimal status (loading / done / error).
+ * Translated HTML is applied via shared localStorage + MessageViewExtension (iframe).
+ */
 export default class TranslationBodyHeader extends React.Component {
   static displayName = 'TranslationBodyHeader';
 
@@ -30,100 +24,78 @@ export default class TranslationBodyHeader extends React.Component {
 
   constructor(props) {
     super(props);
-    this.state = {
-      status: 'idle',
-      error: null,
-      targetLang: null,
-      translationHtml: null,
-      originalSanitized: null,
-      truncated: false,
-      activeTab: 'english',
-    };
     this._abort = null;
-    this._rootRef = null;
+    this._mbpUnsub = null;
+    this._doneTimer = null;
+    this.state = {
+      ui: 'idle',
+      errorText: null,
+    };
   }
 
   componentDidMount() {
+    this._subscribeMessageBodyProcessor();
     this._run();
   }
 
-  componentDidUpdate(prevProps, prevState) {
+  componentDidUpdate(prevProps) {
     if (
       this.props.message &&
       prevProps.message &&
       this.props.message.id !== prevProps.message.id
     ) {
+      this._clearDoneTimer();
       this._abortRun();
-      this._setIframeVisible(true);
-      this.setState({
-        status: 'idle',
-        error: null,
-        targetLang: null,
-        translationHtml: null,
-        originalSanitized: null,
-        truncated: false,
-        activeTab: 'english',
-      });
+      this.setState({ ui: 'idle', errorText: null });
+      this._unsubscribeMessageBodyProcessor();
+      this._subscribeMessageBodyProcessor();
       this._run();
+      return;
     }
-
     if (
-      prevState.activeTab !== this.state.activeTab ||
-      prevState.status !== this.state.status
+      this.props.message &&
+      prevProps.message &&
+      this.props.message.id === prevProps.message.id &&
+      this.props.message !== prevProps.message &&
+      typeof this.props.message.body === 'string' &&
+      this.props.message.body !== prevProps.message.body
     ) {
-      this._syncIframeHide();
-    }
-
-    if (this.state.status === 'error') {
-      this._setIframeVisible(true);
+      this._abortRun();
+      this._run();
     }
   }
 
   componentWillUnmount() {
+    this._clearDoneTimer();
     this._abortRun();
-    this._setIframeVisible(true);
+    this._unsubscribeMessageBodyProcessor();
   }
 
-  _syncIframeHide() {
-    if (!getHideOriginalIframe()) {
-      this._setIframeVisible(true);
-      return;
+  _clearDoneTimer() {
+    if (this._doneTimer) {
+      clearTimeout(this._doneTimer);
+      this._doneTimer = null;
     }
-    const hide =
-      this.state.status === 'done' && this.state.activeTab === 'english';
-    this._setIframeVisible(!hide);
   }
 
-  _setIframeVisible(show) {
-    const root = this._rootRef;
-    if (!root) {
+  _subscribeMessageBodyProcessor = () => {
+    this._unsubscribeMessageBodyProcessor();
+    const { message } = this.props;
+    if (!message) {
       return;
     }
-    const span = root.parentElement;
-    if (!span) {
-      return;
+    this._mbpUnsub = MessageBodyProcessor.subscribe(message, true, () => {
+      this._abortRun();
+      this._run();
+    });
+  };
+
+  _unsubscribeMessageBodyProcessor = () => {
+    if (this._mbpUnsub) {
+      this._mbpUnsub();
+      this._mbpUnsub = null;
     }
-    const iframes = span.querySelectorAll('iframe');
-    const iframe = iframes.length ? iframes[iframes.length - 1] : null;
-    if (!iframe) {
-      return;
-    }
-    const wrap = iframe.parentElement;
-    if (!wrap) {
-      return;
-    }
-    if (show) {
-      if (wrap.dataset.lmstudioSavedDisplay !== undefined) {
-        wrap.style.display = wrap.dataset.lmstudioSavedDisplay;
-        delete wrap.dataset.lmstudioSavedDisplay;
-      }
-    } else {
-      if (wrap.dataset.lmstudioSavedDisplay === undefined) {
-        wrap.dataset.lmstudioSavedDisplay = wrap.style.display || '';
-      }
-      wrap.style.display = 'none';
-    }
-  }
+  };
 
   _abortRun() {
     if (this._abort) {
@@ -134,238 +106,139 @@ export default class TranslationBodyHeader extends React.Component {
 
   _run = async () => {
     const { message } = this.props;
-    if (!message || typeof message.body !== 'string') {
-      this.setState({ status: 'skip' });
+    if (!message) {
+      return;
+    }
+    if (typeof message.body !== 'string') {
       return;
     }
 
-    const plain = stripHtmlToText(message.body).trim();
+    let plain;
+    try {
+      plain = stripHtmlToText(message.body).trim();
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      this.setState({ ui: 'error', errorText: msg });
+      if (AppEnv.reportError) {
+        AppEnv.reportError(e);
+      }
+      return;
+    }
+
     const targetLang = detectCjkTarget(plain);
     if (!targetLang) {
-      this.setState({ status: 'skip' });
+      this.setState({ ui: 'idle', errorText: null });
       return;
     }
 
-    const cacheKey = makeCacheKey(message.id, message.body);
-    const cached = getCachedTranslation(cacheKey);
-    const originalPromise = SanitizeTransformer.run(message.body);
-
-    if (cached && cached.targetLang === targetLang) {
-      try {
-        const originalSanitized = await originalPromise;
-        if (this.props.message.id !== message.id) {
-          return;
-        }
-        this.setState({
-          status: 'done',
-          targetLang,
-          translationHtml: cached.html,
-          originalSanitized,
-          truncated: false,
-          error: null,
-        });
-      } catch (err) {
-        if (this.props.message.id !== message.id) {
-          return;
-        }
-        this.setState({ status: 'error', error: err.message || String(err) });
-      }
+    if (hasCurrentTranslation(message, targetLang)) {
+      this.setState({ ui: 'idle', errorText: null });
       return;
     }
 
+    this._clearDoneTimer();
     this._abort = new AbortController();
     const signal = this._abort.signal;
+    const msgId = message.id;
 
-    this.setState({
-      status: 'loading',
-      error: null,
-      targetLang,
-      translationHtml: null,
-      originalSanitized: null,
-    });
+    this.setState({ ui: 'loading', errorText: null });
 
-    const baseUrl = getLmstudioBaseUrl();
-    let modelId;
+    let translatedHtml;
     try {
-      modelId = await getDefaultModelId(baseUrl, signal);
-    } catch (err) {
-      if (signal.aborted || (err && err.name === 'AbortError')) {
-        return;
-      }
-      this.setState({ status: 'error', error: err.message || String(err) });
-      return;
-    }
-
-    const { html: htmlIn, truncated } = truncateHtml(message.body, MAX_HTML);
-
-    let raw;
-    try {
-      raw = await chat(
-        baseUrl,
-        modelId,
-        buildTranslateHtmlMessages(targetLang, htmlIn),
-        CHAT_TOKENS,
+      translatedHtml = await translateBodyHtmlWithLmStudio(
+        targetLang,
+        message.body,
         signal
       );
     } catch (err) {
       if (signal.aborted || (err && err.name === 'AbortError')) {
+        this.setState({ ui: 'idle', errorText: null });
         return;
       }
-      this.setState({ status: 'error', error: err.message || String(err) });
-      return;
-    }
-
-    if (signal.aborted) {
-      return;
-    }
-
-    let translationHtml;
-    let originalSanitized;
-    try {
-      const stripped = stripHtmlFences(raw);
-      translationHtml = await SanitizeTransformer.run(stripped);
-      originalSanitized = await originalPromise;
-    } catch (err) {
-      if (signal.aborted || (err && err.name === 'AbortError')) {
-        return;
+      const msg = (err && err.message) || String(err);
+      this.setState({ ui: 'error', errorText: msg });
+      if (AppEnv.reportError) {
+        AppEnv.reportError(err);
       }
-      this.setState({ status: 'error', error: err.message || String(err) });
       return;
     }
 
-    if (this.props.message.id !== message.id) {
+    if (this.props.message.id !== msgId) {
       return;
     }
 
-    setCachedTranslation(cacheKey, targetLang, translationHtml);
+    if (!translatedHtml || !String(translatedHtml).trim()) {
+      const msg = localized('LM Studio returned empty translation.');
+      this.setState({ ui: 'error', errorText: msg });
+      return;
+    }
 
-    this.setState({
-      status: 'done',
-      targetLang,
-      translationHtml,
-      originalSanitized,
-      truncated,
-      error: null,
+    persistTranslatedBody(message, translatedHtml, {
+      fromLang: targetLang,
+      toLang: 'en',
     });
-  };
 
-  _onTabEnglish = () => {
-    this.setState({ activeTab: 'english' });
-  };
+    try {
+      MessageBodyProcessor.updateCacheForMessage(message);
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      this.setState({ ui: 'error', errorText: msg });
+      if (AppEnv.reportError) {
+        AppEnv.reportError(e);
+      }
+      return;
+    }
 
-  _onTabOriginal = () => {
-    this.setState({ activeTab: 'original' });
+    this.setState({ ui: 'done', errorText: null });
+    this._doneTimer = setTimeout(() => {
+      this._doneTimer = null;
+      if (this.props.message && this.props.message.id === msgId) {
+        this.setState({ ui: 'idle' });
+      }
+    }, DONE_AUTO_HIDE_MS);
   };
 
   render() {
-    const {
-      status,
-      error,
-      targetLang,
-      translationHtml,
-      originalSanitized,
-      truncated,
-      activeTab,
-    } = this.state;
+    const { ui, errorText } = this.state;
 
-    if (status === 'skip' || status === 'idle') {
-      return null;
-    }
-
-    if (status === 'loading') {
+    if (ui === 'loading') {
       return (
-        <div
-          className="lmstudio-translator lmstudio-translator--loading"
-          ref={(el) => {
-            this._rootRef = el;
-          }}
-        >
+        <div className="lmstudio-translator lmstudio-translator--loading">
           <span className="lmstudio-translator__label">
-            {localized('Translation')}
+            {localized('LM Studio')}
           </span>
           <span className="lmstudio-translator__status">
-            {localized('Translating with LM Studio…')}
+            {localized('Translating…')}
           </span>
         </div>
       );
     }
 
-    if (status === 'error') {
+    if (ui === 'error' && errorText) {
       return (
-        <div
-          className="lmstudio-translator lmstudio-translator--error"
-          ref={(el) => {
-            this._rootRef = el;
-          }}
-        >
+        <div className="lmstudio-translator lmstudio-translator--error">
           <span className="lmstudio-translator__label">
-            {localized('Translation')}
+            {localized('Translation failed')}
           </span>
-          <span className="lmstudio-translator__err">{error}</span>
+          <span className="lmstudio-translator__err">{errorText}</span>
         </div>
       );
     }
 
-    if (status !== 'done' || !translationHtml) {
-      return null;
+    if (ui === 'done') {
+      return (
+        <div className="lmstudio-translator lmstudio-translator--done">
+          <span className="lmstudio-translator__label">
+            {localized('Translation applied')}
+          </span>
+          <span className="lmstudio-translator__status">
+            {localized('English version is shown in the message below.')}
+          </span>
+        </div>
+      );
     }
 
-    const langLabel =
-      targetLang === 'ja' ? localized('Japanese') : localized('Chinese');
-
-    return (
-      <div
-        className="lmstudio-translator lmstudio-translator--result"
-        ref={(el) => {
-          this._rootRef = el;
-        }}
-      >
-        <div className="lmstudio-translator__tabs">
-          <button
-            type="button"
-            className={
-              activeTab === 'english'
-                ? 'lmstudio-translator__tab lmstudio-translator__tab--active'
-                : 'lmstudio-translator__tab'
-            }
-            onClick={this._onTabEnglish}
-          >
-            {localized('English')}
-          </button>
-          <button
-            type="button"
-            className={
-              activeTab === 'original'
-                ? 'lmstudio-translator__tab lmstudio-translator__tab--active'
-                : 'lmstudio-translator__tab'
-            }
-            onClick={this._onTabOriginal}
-          >
-            {localized('Original')} ({langLabel})
-          </button>
-        </div>
-
-        {truncated ? (
-          <div className="lmstudio-translator__trunc-note">
-            {localized('Message was truncated for translation API')}
-          </div>
-        ) : null}
-
-        {activeTab === 'english' ? (
-          <div
-            className="lmstudio-translator__html lmstudio-translator__scroll"
-            dangerouslySetInnerHTML={{ __html: translationHtml }}
-          />
-        ) : (
-          <div
-            className="lmstudio-translator__html lmstudio-translator__scroll"
-            dangerouslySetInnerHTML={{
-              __html: originalSanitized || '',
-            }}
-          />
-        )}
-      </div>
-    );
+    return null;
   }
 }
 

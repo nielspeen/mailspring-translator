@@ -1,5 +1,11 @@
-import { ComponentRegistry, MessageStore } from 'mailspring-exports';
+import {
+  ComponentRegistry,
+  MessageStore,
+  DatabaseStore,
+  ExtensionRegistry,
+} from 'mailspring-exports';
 import TranslationBodyHeader from './translation-body-header';
+import LmStudioTranslationMessageExtension from './lmstudio-message-extension';
 import {
   enqueuePrefetchForMessages,
   clearPrefetchQueue,
@@ -25,18 +31,29 @@ export const config = {
     description:
       'Parallel LM Studio translation requests when prefetching the focused thread (Chinese/Japanese only).',
   },
-  hideOriginalIframeWhenEnglishTab: {
-    type: 'boolean',
-    default: false,
-    title: 'Hide built-in body when English tab is selected',
-    description:
-      'When enabled, hides Mailspring’s message iframe while the English translation tab is active (experimental).',
-  },
 };
 
 let _messageStoreUnsubscribe;
+let _databaseStoreUnsubscribe;
+let _dbPrefetchTimer;
+
+function schedulePrefetchFromDb() {
+  clearTimeout(_dbPrefetchTimer);
+  _dbPrefetchTimer = setTimeout(() => {
+    _dbPrefetchTimer = null;
+    try {
+      enqueuePrefetchForMessages(MessageStore.items());
+    } catch (e) {
+      if (AppEnv.reportError) {
+        AppEnv.reportError(e);
+      }
+    }
+  }, 350);
+}
 
 export function activate() {
+  ExtensionRegistry.MessageView.register(LmStudioTranslationMessageExtension);
+
   ComponentRegistry.register(TranslationBodyHeader, {
     role: 'message:BodyHeader',
   });
@@ -56,15 +73,24 @@ export function activate() {
   } catch (e) {
     /* MessageStore may be empty at activation */
   }
+
+  _databaseStoreUnsubscribe = DatabaseStore.listen(schedulePrefetchFromDb);
 }
 
 export function deactivate() {
   clearPrefetchQueue();
+  clearTimeout(_dbPrefetchTimer);
+  _dbPrefetchTimer = null;
+  if (_databaseStoreUnsubscribe) {
+    _databaseStoreUnsubscribe();
+    _databaseStoreUnsubscribe = null;
+  }
   if (_messageStoreUnsubscribe) {
     _messageStoreUnsubscribe();
     _messageStoreUnsubscribe = null;
   }
   ComponentRegistry.unregister(TranslationBodyHeader);
+  ExtensionRegistry.MessageView.unregister(LmStudioTranslationMessageExtension);
 }
 
 export function serialize() {}
