@@ -1,0 +1,59 @@
+@import "ui-variables";
+
+.lmstudio-translator {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: @font-size-small;
+  line-height: 1.45;
+  border: 1px solid @border-color-divider;
+
+  &--loading {
+    background: fade(@background-secondary, 80%);
+    color: @text-color-subtle;
+  }
+
+  &--error {
+    background: fade(@color-danger, 12%);
+    border-color: fade(@color-danger, 35%);
+    color: @text-color;
+  }
+
+  &--result {
+    background: fade(@background-secondary, 95%);
+    border-color: @border-color-divider;
+  }
+
+  &__label,
+  &__title {
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: @text-color;
+  }
+
+  &__status {
+    margin-left: 6px;
+    color: @text-color-subtle;
+  }
+
+  &__err {
+    display: block;
+    margin-top: 4px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  &__note {
+    font-weight: normal;
+    color: @text-color-subtle;
+    font-size: 0.9em;
+  }
+
+  &__text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: @text-color;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+}

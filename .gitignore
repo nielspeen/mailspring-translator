@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Logs & debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env & secrets (keep API keys / local overrides out of git)
+.env
+.env.*
+!.env.example
+
+# Tooling / coverage
+coverage/
+.nyc_output/
+*.tsbuildinfo
+
+# IDE / editor (optional local settings)
+.idea/
+*.swp
+*.swo
+*~

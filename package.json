@@ -1,0 +1,23 @@
+{
+  "name": "mailspring-lmstudio-translator",
+  "displayName": "LM Studio translator",
+  "main": "./lib/main",
+  "version": "1.0.0",
+  "description": "Translates non–English/Dutch mail to English using LM Studio (local LLM).",
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build"
+  },
+  "engines": {
+    "mailspring": ">=1.6.3"
+  },
+  "windowTypes": {
+    "default": true,
+    "thread-popout": true
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/react": "^16.14.0",
+    "typescript": "^4.9.5"
+  }
+}
