@@ -10,6 +10,8 @@ import { translateBodyHtmlWithLmStudio } from './translate-pipeline';
 import { stripHtmlToText } from './html-utils';
 
 const DONE_AUTO_HIDE_MS = 5000;
+/** MessageBodyProcessor can fire many times while the HTML body is assembled; aborting on every tick cleared loading before LM finished. */
+const PIPELINE_RUN_DEBOUNCE_MS = 400;
 
 /**
  * `message:BodyHeader` — LM translation + minimal status (loading / done / error).
@@ -27,6 +29,7 @@ export default class TranslationBodyHeader extends React.Component {
     this._abort = null;
     this._mbpUnsub = null;
     this._doneTimer = null;
+    this._pipelineDebounceTimer = null;
     this.state = {
       ui: 'idle',
       errorText: null,
@@ -44,6 +47,7 @@ export default class TranslationBodyHeader extends React.Component {
       prevProps.message &&
       this.props.message.id !== prevProps.message.id
     ) {
+      this._clearPipelineDebounce();
       this._clearDoneTimer();
       this._abortRun();
       this.setState({ ui: 'idle', errorText: null });
@@ -66,6 +70,7 @@ export default class TranslationBodyHeader extends React.Component {
   }
 
   componentWillUnmount() {
+    this._clearPipelineDebounce();
     this._clearDoneTimer();
     this._abortRun();
     this._unsubscribeMessageBodyProcessor();
@@ -85,9 +90,23 @@ export default class TranslationBodyHeader extends React.Component {
       return;
     }
     this._mbpUnsub = MessageBodyProcessor.subscribe(message, true, () => {
-      this._abortRun();
-      this._run();
+      this._scheduleRunFromPipeline();
     });
+  };
+
+  _clearPipelineDebounce() {
+    if (this._pipelineDebounceTimer) {
+      clearTimeout(this._pipelineDebounceTimer);
+      this._pipelineDebounceTimer = null;
+    }
+  }
+
+  _scheduleRunFromPipeline = () => {
+    this._clearPipelineDebounce();
+    this._pipelineDebounceTimer = setTimeout(() => {
+      this._pipelineDebounceTimer = null;
+      this._run();
+    }, PIPELINE_RUN_DEBOUNCE_MS);
   };
 
   _unsubscribeMessageBodyProcessor = () => {
@@ -137,6 +156,7 @@ export default class TranslationBodyHeader extends React.Component {
     }
 
     this._clearDoneTimer();
+    this._abortRun();
     this._abort = new AbortController();
     const signal = this._abort.signal;
     const msgId = message.id;
