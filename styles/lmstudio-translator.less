@@ -67,13 +67,14 @@
     cursor: pointer;
 
     &:hover {
-      background: fade(@accent-primary, 12%);
+      /* Avoid fade(@accent-primary): not defined in every theme’s ui-variables */
+      background: fade(@text-color, 8%);
     }
 
     &--active {
-      border-color: @accent-primary;
+      border-color: fade(@text-color, 35%);
       font-weight: 600;
-      background: fade(@accent-primary, 15%);
+      background: fade(@text-color, 10%);
     }
   }
 
